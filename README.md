@@ -1,4 +1,4 @@
-ansible-neo4j-cluster
+Neo4j HA Cluster Deployment Using Ansible
 =====================
 
 Ansible playbook for Neo4j HA Cluster on AWS/Eucalyptus.  The AMI/EMI used should be an Ubuntu Cloud Image.  This was tested using Ubuntu 12.04 Precise.  This playbook deploys the following:
