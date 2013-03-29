@@ -27,7 +27,8 @@ Any config changes for HA Proxy or the Neo4j cluster can be found under the vars
 After cloning the repository, and populating the config files under vars directory, run the following command:
 
 ```
- ansible-playbook ansible-neo4j-cluster/neo4j-cluster.yml -v --private-key=<AWS/Eucalyptus Private Key file> --extra-vars "node_count=3"
+ ansible-playbook ansible-neo4j-cluster/neo4j-cluster.yml
+ --private-key=<AWS/Eucalyptus Private Key file> --extra-vars "node_count=3"
 ```
 
 To change the number of nodes for the cluster, change node_code to equal that number (e.g. node_code=7).  
