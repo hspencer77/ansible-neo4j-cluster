@@ -1,0 +1,5 @@
+---
+# Variables here are applicable to haproxy group
+
+haproxymode: http
+haproxyport: 80

@@ -1,0 +1,4 @@
+---
+# Variables here are applicable to neo4j-cluster group
+
+pull_interval: 1ms

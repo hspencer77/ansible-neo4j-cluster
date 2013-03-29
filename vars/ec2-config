@@ -1,0 +1,10 @@
+---
+# Variables here are applicable to EC2/Eucalyptus Information
+
+keypair: <EC2/Eucalyptus Keypair>
+ec2_access_key: <EC2_ACCESS_KEY>
+ec2_secret_key: <EC2_SECRET_KEY>
+ec2_url: <EC2_URL>
+instance_type: m1.small
+security_group: <AWS/Eucalyptus Security Group>
+image: <AMI/EMI>

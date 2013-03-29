@@ -1,0 +1,329 @@
+---
+# This playbook is for deploying multiple instances into EC2/Euca to create a Neo4j Cluster running on Ubuntu Cloud Images.
+#   - uses the ec2 module.
+#
+# Run this with ansible-playbook and supply the private key for your EC2/Euca user (to access the instances to configure the cluster ), e.g:
+# ansible-playbook neo4j-cluster.yml -v --private-key=/path/to/ec2/pri/key
+- name: Stage Neo4j Cluster
+  hosts: local
+  connection: local
+  user: ubuntu
+  gather_facts: false
+
+  vars_files:
+    - vars/ec2-config 
+    - vars/neo4j-cluster 
+    - vars/haproxy
+
+  tasks:
+    - name: Launch Neo4j cluster instances 
+      local_action: ec2 keypair=${keypair} group=${security_group} instance_type=${instance_type} image=${image} wait=true count=${node_count} 
+      register: ec2
+
+    - name: Add new instances to host group with public IPs, adding private IP and AMI Launch Index as variables
+      local_action: add_host hostname=${item.public_ip} groupname=neo4j-cluster private_ip=${item.private_ip} ami_launch_index=${item.ami_launch_index}
+      with_items: ${ec2.instances}
+
+    - name: Template the /etc/hosts file so all cluster members know of each other
+      local_action: template src=./templates/hosts.j2 dest=/tmp/hosts
+    
+    - name: Template the neo4j.properties file to populate initial_hosts value; save template for later
+      local_action: template src=./templates/neo4j.properties.j2 dest=/tmp/neo4j.properties
+    
+    - name: Template the haproxy.cfg file; save template for later
+      local_action: template src=./templates/haproxy.cfg.j2 dest=/tmp/haproxy.cfg
+    
+    - name: Report
+      local_action: debug msg="Cluster members launched."
+
+    - name: Launch HA Proxy instance 
+      local_action: ec2 keypair=${keypair} group=${security_group} instance_type=${instance_type} image=${image} wait=true
+      register: ec2_ha
+
+    - name: Add instance to host group with public IPs
+      local_action: add_host hostname=${item.public_ip} groupname=haproxy
+      with_items: ${ec2_ha.instances}
+
+    - name: Report
+      local_action: debug msg="HA Proxy server launched."
+
+    - name: Wait for a while before trying to configure instances
+      local_action: pause minutes=5
+
+- name: Install dependency packages
+  hosts: neo4j-cluster
+  user: ubuntu
+  sudo: yes
+  gather_facts: true
+
+  tasks:
+    - name: Report
+      local_action: debug msg="Configuring cluster members with pre-req software..."
+
+    - name: Add hosts of instances in Neo4j cluster group to /etc/hosts
+      action: copy src=/tmp/hosts dest=/etc/hosts
+
+    - name: Update Repositories
+      action: command apt-get -y --force-yes dist-upgrade
+
+    - name: Neo4j Repository Signing Key
+      action: apt_key url=http://debian.neo4j.org/neotechnology.gpg.key state=present
+
+    - name: Add Neo4j Repository - Debian
+      action: apt_repository repo='deb http://debian.neo4j.org/repo testing/'
+
+    - name: Euca2ools Repository Signing Key
+      action: apt_key url=http://www.eucalyptus.com/sites/all/files/c1240596-eucalyptus-release-key.pub state=present
+
+    - name: Add Euca2ools Repository for Ubuntu Precise
+      action: apt_repository repo='deb http://downloads.eucalyptus.com/software/euca2ools/2.1/ubuntu precise main'
+
+    - name: Update Repositories Cache
+      action: command apt-get update
+
+    - name: Ensure NTP is installed
+      action: apt pkg=ntp force=yes
+
+    - name: Ensure NTP is up and running
+      action: service name=ntp state=started
+      ignore_errors: yes
+
+    - name: Ensure less, bind9utils, openjdk-6-jdk, liblog4j1.2-java, facter, ruby-json and euca2ools is installed
+      action: apt pkg=${item} force=yes
+      with_items:
+          - less
+          - bind9utils
+          - openjdk-6-jdk
+          - liblog4j1.2-java
+          - daemon
+          - default-jre
+          - default-jre-headless
+          - facter
+          - ruby-json
+          - euca2ools
+
+    - name: Gather EC2 Metadata Information for Hostname
+      action: ec2_facts
+
+    - name: Grab Hostname and set it for the instances
+      action: sysctl name=kernel.hostname value=${ansible_ec2_local_hostname} state=present
+
+- name: Install dependency packages for HA Proxy
+  hosts: haproxy
+  user: ubuntu
+  sudo: yes
+  gather_facts: true
+
+  tasks:
+    - name: Report
+      local_action: debug msg="Configuring haproxy instance with pre-req software..."
+
+    - name: Update Repositories
+      action: command apt-get -y --force-yes dist-upgrade
+
+    - name: Euca2ools Repository Signing Key
+      action: apt_key url=http://www.eucalyptus.com/sites/all/files/c1240596-eucalyptus-release-key.pub state=present
+
+    - name: Add Euca2ools Repository for Ubuntu Precise
+      action: apt_repository repo='deb http://downloads.eucalyptus.com/software/euca2ools/2.1/ubuntu precise main'
+
+    - name: Update Repositories Cache
+      action: command apt-get update
+
+    - name: Ensure NTP is installed
+      action: apt pkg=ntp force=yes
+
+    - name: Ensure less, haproxy, socat, bind9utils, facter, ruby-json, and euca2ools 
+      action: apt pkg=${item} force=yes
+      with_items:
+          - less
+          - haproxy
+          - socat
+          - bind9utils
+          - facter
+          - ruby-json
+          - euca2ools
+
+    - name: Ensure NTP is up and running
+      action: service name=ntp state=started
+      ignore_errors: yes
+
+    - name: Gather EC2 Metadata Information for Hostname
+      action: ec2_facts
+
+    - name: Grab Hostname and set it for the instances
+      action: sysctl name=kernel.hostname value=${ansible_ec2_local_hostname} state=present
+
+    - name: Copy haproxy.cfg to HAProxy instance
+      action: copy src=/tmp/haproxy.cfg dest=/etc/haproxy/haproxy.cfg
+
+    - name: Enable haproxy to be controlled by service
+      action: lineinfile dest=/etc/default/haproxy state=present regexp=^ENABLED line=ENABLED=1     
+
+
+- name: Prepare Ephemeral Storage and Install Neo4j Software
+  hosts: neo4j-cluster
+  user: ubuntu
+  sudo: yes
+  gather_facts: true
+
+  tasks:
+    - name: Report
+      local_action: debug msg="Ensure ephemeral storage is setup correctly..."
+
+    - name: Ensure ephemeral device is labeled 
+      action: command /sbin/tune2fs -L ephemeral0 /dev/${item} removes=/dev/${item}
+      with_items:
+          - sda2
+          - vda2
+          - xvda2
+
+    - name: Create Neo4j Directory
+      action: command /bin/mkdir -p /var/lib/neo4j
+
+    - name: Check to see if ephemeral is already mounted
+      action: mount name=${item} src=LABEL=ephemeral0 fstype=auto state=present
+      with_items:
+          - /mnt
+          - /media/ephemeral0
+      register: ephemeral_mounted
+      ignore_errors: yes
+
+      action: mount name=${item} src=LABEL=ephemeral0 fstype=auto state=unmounted
+      with_items:
+          - /mnt
+          - /media/ephemeral0
+      when_unset: $ephemeral_mounted
+      register: ephemeral_unmounted
+      ignore_errors: yes
+
+    - name: Mount ephemeral storage
+      action: mount name=/var/lib/neo4j src=LABEL=ephemeral0 fstype=auto opts=defaults,nobootwait,comment=neo4j-storage state=mounted
+      when_set: $ephemeral_unmounted
+
+    - name: Edit rc.local to make sure ephemeral remounts in the case of a reboot
+      action: lineinfile dest=/etc/rc.local regexp='^# By' insertafter="^# By default this script does nothing." line="# By default this script does nothing.\nMETA_HOSTNAME=`curl -s http://169.254.169.254/latest/meta-data/local-hostname`\nMETA_IP=`curl -s http://169.254.169.254/latest/meta-data/local-ipv4`\necho ${META_IP}   ${META_HOSTNAME} >> /etc/hosts; hostname ${META_HOSTNAME}; sysctl -w kernel.hostname=${META_HOSTNAME}\nif [ -d /var/lib/neo4j/ ]; then mount LABEL=ephemeral0 /var/lib/neo4j; /var/lib/neo4j/bin/neo4j start; fi"
+
+    - name: Install Neo4j Enterprise
+      action: apt pkg=neo4j-enterprise force=yes  
+
+
+- name: Configure Neo4j HA Cluster
+  hosts: neo4j-cluster
+  user: ubuntu
+  sudo: yes
+  gather_facts: true
+
+  tasks:
+    - name: Report
+      local_action: debug msg="Prepare for config file changes"
+
+    - name: Stop the Neo4j Service
+      action: command /usr/sbin/service neo4j-service remove
+      async: 60
+      poll: 5
+
+    - name: Wait for neo4j-service to stop
+      wait_for: port=7474 state=stopped timeout=80
+
+    - name: Copy neo4j.properties to each member of the Neo4j cluster group
+      action: copy src=/tmp/neo4j.properties dest=/var/lib/neo4j/conf/neo4j.properties owner=neo4j group=adm mode=0644
+
+    - name: Gather EC2 Metadata Information
+      action: ec2_facts
+
+    - name: Create ha.server_id value
+      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{ID= $1 + 1} {print ID}'
+      register: server_id
+
+    - name: Change ha.server_id parameter in neo4j.properties file
+      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^ha\.server_id line=ha.server_id=${server_id.stdout}      
+
+    - name: Create ha.server value
+      action: shell echo ${ansible_ec2_ami_launch_index} ${ansible_ec2_local_ipv4} | awk 'BEGIN {OFS = ":"} {PORT= 6001 + $1} {print $2,PORT}'
+      register: server
+
+    - name: Change the ha.server parameter in the neo4j.properties file
+      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^ha\.server line=ha.server=${server.stdout}      
+
+    - name: Create online_backup_server value
+      action: shell echo ${ansible_ec2_ami_launch_index} ${ansible_ec2_local_ipv4} | awk 'BEGIN {OFS = ":"} {PORT = 6362 + $1} {print $2,PORT}'
+      register: backup_server
+
+    - name: Change the online_backup_server parameter in neo4j.properties file
+      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^online_backup_server line=online_backup_server=${backup_server.stdout}      
+
+    - name: Create ha.cluster_server value
+      action: shell echo ${ansible_ec2_ami_launch_index} ${ansible_ec2_local_ipv4} | awk 'BEGIN {OFS = ":"} {PORT = 5001 + $1} {print $2,PORT}'
+      register: cluster_server
+
+    - name: Change the ha.cluster_server parameter in neo4j.properties file
+      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^ha\.cluster_server line=ha.cluster_server=${cluster_server.stdout}      
+
+    - name: Create remote_shell_port value
+      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 1234 + $1; print PORT}'
+      register: remote_shell_port
+
+    - name: Change the remote_shell_port parameter in the neo4j.properties file
+      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^remote_shell_port line=remote_shell_port=${remote_shell_port.stdout}      
+
+    - name: Change the webserver.port parameter in neo4j-server.properties file
+      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 7474 + $1; print PORT}'
+      register: webserver_port
+
+    - name: Change the webserver.https.port parameter in neo4j-server.properties file
+      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 7573 + $1; print PORT}'
+      register: webserver_https_port
+
+    - name: Copy neo4j-server.properties template to neo4j node
+      action: template src=./templates/neo4j-server.properties.j2 dest=/var/lib/neo4j/conf/neo4j-server.properties owner=neo4j group=adm mode=0644 
+
+    - name: Set jmxremote.port parameter in neo4j-wrapper.conf
+      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT= 3637 + $1; print PORT}'
+      register: jmxremote_port
+
+    - name: Copy neo4j-wrapper.conf template to neo4j node
+      action: template src=./templates/neo4j-wrapper.conf.j2 dest=/var/lib/neo4j/conf/neo4j-wrapper.conf owner=neo4j group=adm mode=0644 
+
+    - name: Change permissions to 0600 of jmx.password file
+      action: file path=/var/lib/neo4j/conf/jmx.password mode=0600
+
+    - name: Change ulimit to 40000
+      action: lineinfile dest=/etc/security/limits.conf regexp='^ubuntu' insertbefore="^# End of file" line="ubuntu   soft    nofile  40000\nubuntu   hard    nofile  40000\n" 
+
+    - name: Start the Neo4j Service
+      action: command /var/lib/neo4j/bin/neo4j start
+      async: 80
+      poll: 5
+
+    - name: Wait for neo4j-service to start 
+      wait_for: port=${webserver_port.stdout} timeout=120
+
+- name: Open Start HA Proxy and open port in security group
+  hosts: haproxy
+  user: ubuntu
+  sudo: yes
+  gather_facts: true
+
+  vars_files:
+    - vars/ec2-config 
+    - vars/haproxy
+
+  tasks:
+    - name: Report
+      local_action: debug msg="Start HAProxy"
+
+    - name: Start the HA Proxy Service
+      action: command /usr/sbin/service haproxy start
+      async: 20
+      poll: 5
+
+    - name: Gather EC2 Metadata Information
+      action: ec2_facts
+
+    - name: Report
+      local_action: debug msg="Open HAProxy Port in security group"
+
+    - name: Open HA Proxy port
+      action: shell /usr/bin/euca-authorize --access-key ${ec2_access_key} --secret-key ${ec2_secret_key} --url ${ec2_url} -P tcp -p ${haproxyport} -s 0.0.0.0/0 ${ansible_ec2_security_groups}
+

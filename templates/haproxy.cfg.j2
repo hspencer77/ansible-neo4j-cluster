@@ -1,0 +1,26 @@
+{% set inst = ec2 %}
+global
+        maxconn 4096
+        user haproxy
+        group haproxy
+        daemon
+
+defaults
+        log     global
+        mode    {{ haproxymode }}
+        option  httplog
+        option  dontlognull
+        retries 3
+        option  redispatch
+        maxconn 2000
+        contimeout      5000
+        clitimeout      50000
+        srvtimeout      50000
+
+listen neo4jcluster *:{{ haproxyport }}
+        mode    {{ haproxymode }}
+        stats   enable
+        balance roundrobin
+        {% for instance in inst.instances %}
+        server {{ instance.id }} {{ instance.private_ip ~ ":"}}{{ instance.ami_launch_index|int + 7474 }} check
+        {% endfor %}
