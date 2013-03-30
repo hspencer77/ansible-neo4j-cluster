@@ -33,3 +33,13 @@ After cloning the repository, and populating the config files under vars directo
 
 To change the number of nodes for the cluster, change node_code to equal that number (e.g. node_code=7).  
 
+After the playbook finishes, there will be an URL provided to access the cluster - similar to the example below:
+
+```
+TASK: [Display HAProxy URL] *********************
+changed: [23.22.248.75] => {"changed": true, "cmd": 
+"echo \"HAProxy URL for Neo4j - http://ec2-23-22-248-75.compute-1.amazonaws.com/webadmin/#/info/org.neo4j/High%20Availability/\" ", "delta": "0:00:00.006835", "end": "2013-03-30 19:54:31.104320", 
+"rc": 0, "start": "2013-03-30 19:54:31.097485", "stderr": "", 
+"stdout": "HAProxy URL for Neo4j - http://ec2-23-22-248-75.compute-1.amazonaws.com/webadmin/#/info/org.neo4j/High%20Availability/"}
+```
+
