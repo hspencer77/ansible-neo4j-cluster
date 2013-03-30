@@ -46,7 +46,8 @@ changed: [23.22.248.75] => {"changed": true, "cmd":
 To get the status of the Neo4j cluster, run the following command:
 
 ```
-curl -H "Content-Type:application/json" -d '["org.neo4j:*"]' http://ec2-23-22-248-75.compute-1.amazonaws.com/db/manage/server/jmx/query
+curl -H "Content-Type:application/json" -d '["org.neo4j:*"]' 
+http://ec2-23-22-248-75.compute-1.amazonaws.com/db/manage/server/jmx/query
 ```
 
 For more information, please refer to the documentation for configuring/managing the Neo4j cluster - http://docs.neo4j.org/chunked/milestone/operations.html
