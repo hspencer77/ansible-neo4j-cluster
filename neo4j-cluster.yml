@@ -27,9 +27,6 @@
     - name: Template the /etc/hosts file so all cluster members know of each other
       local_action: template src=./templates/hosts.j2 dest=/tmp/hosts
     
-    - name: Template the neo4j.properties file to populate initial_hosts value; save template for later
-      local_action: template src=./templates/neo4j.properties.j2 dest=/tmp/neo4j.properties
-    
     - name: Template the haproxy.cfg file; save template for later
       local_action: template src=./templates/haproxy.cfg.j2 dest=/tmp/haproxy.cfg
     
@@ -48,7 +45,9 @@
       local_action: debug msg="HA Proxy server launched."
 
     - name: Wait for a while before trying to configure instances
-      local_action: pause minutes=5
+      local_action: pause seconds=30
+
+
 
 - name: Install dependency packages
   hosts: neo4j-cluster
@@ -214,6 +213,9 @@
   sudo: yes
   gather_facts: true
 
+  vars_files:
+    - vars/neo4j-cluster 
+
   tasks:
     - name: Report
       local_action: debug msg="Prepare for config file changes"
@@ -226,63 +228,16 @@
     - name: Wait for neo4j-service to stop
       wait_for: port=7474 state=stopped timeout=80
 
-    - name: Copy neo4j.properties to each member of the Neo4j cluster group
-      action: copy src=/tmp/neo4j.properties dest=/var/lib/neo4j/conf/neo4j.properties owner=neo4j group=adm mode=0644
-
     - name: Gather EC2 Metadata Information
       action: ec2_facts
 
-    - name: Create ha.server_id value
-      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{ID= $1 + 1} {print ID}'
-      register: server_id
+    - name: Copy neo4j.properties to each member of the Neo4j cluster group
+      action: template src=./templates/neo4j.properties.j2 dest=/var/lib/neo4j/conf/neo4j.properties owner=neo4j group=adm mode=0644
 
-    - name: Change ha.server_id parameter in neo4j.properties file
-      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^ha\.server_id line=ha.server_id=${server_id.stdout}      
-
-    - name: Create ha.server value
-      action: shell echo ${ansible_ec2_ami_launch_index} ${ansible_ec2_local_ipv4} | awk 'BEGIN {OFS = ":"} {PORT= 6001 + $1} {print $2,PORT}'
-      register: server
-
-    - name: Change the ha.server parameter in the neo4j.properties file
-      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^ha\.server line=ha.server=${server.stdout}      
-
-    - name: Create online_backup_server value
-      action: shell echo ${ansible_ec2_ami_launch_index} ${ansible_ec2_local_ipv4} | awk 'BEGIN {OFS = ":"} {PORT = 6362 + $1} {print $2,PORT}'
-      register: backup_server
-
-    - name: Change the online_backup_server parameter in neo4j.properties file
-      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^online_backup_server line=online_backup_server=${backup_server.stdout}      
-
-    - name: Create ha.cluster_server value
-      action: shell echo ${ansible_ec2_ami_launch_index} ${ansible_ec2_local_ipv4} | awk 'BEGIN {OFS = ":"} {PORT = 5001 + $1} {print $2,PORT}'
-      register: cluster_server
-
-    - name: Change the ha.cluster_server parameter in neo4j.properties file
-      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^ha\.cluster_server line=ha.cluster_server=${cluster_server.stdout}      
-
-    - name: Create remote_shell_port value
-      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 1234 + $1; print PORT}'
-      register: remote_shell_port
-
-    - name: Change the remote_shell_port parameter in the neo4j.properties file
-      action: lineinfile dest=/var/lib/neo4j/conf/neo4j.properties state=present regexp=^remote_shell_port line=remote_shell_port=${remote_shell_port.stdout}      
-
-    - name: Change the webserver.port parameter in neo4j-server.properties file
-      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 7474 + $1; print PORT}'
-      register: webserver_port
-
-    - name: Change the webserver.https.port parameter in neo4j-server.properties file
-      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 7573 + $1; print PORT}'
-      register: webserver_https_port
-
-    - name: Copy neo4j-server.properties template to neo4j node
+    - name: Copy neo4j-server.properties to each member of the Neo4j cluster group
       action: template src=./templates/neo4j-server.properties.j2 dest=/var/lib/neo4j/conf/neo4j-server.properties owner=neo4j group=adm mode=0644 
 
-    - name: Set jmxremote.port parameter in neo4j-wrapper.conf
-      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT= 3637 + $1; print PORT}'
-      register: jmxremote_port
-
-    - name: Copy neo4j-wrapper.conf template to neo4j node
+    - name: Copy neo4j-wrapper.conf to each member of the Neo4j cluster group
       action: template src=./templates/neo4j-wrapper.conf.j2 dest=/var/lib/neo4j/conf/neo4j-wrapper.conf owner=neo4j group=adm mode=0644 
 
     - name: Change permissions to 0600 of jmx.password file
@@ -290,6 +245,10 @@
 
     - name: Change ulimit to 40000
       action: lineinfile dest=/etc/security/limits.conf regexp='^ubuntu' insertbefore="^# End of file" line="ubuntu   soft    nofile  40000\nubuntu   hard    nofile  40000\n" 
+
+    - name: Grab webserver port for test to see if Neo4j starts
+      action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 7474 + $1; print PORT}'
+      register: webserver_port
 
     - name: Start the Neo4j Service
       action: command /var/lib/neo4j/bin/neo4j start
@@ -299,7 +258,7 @@
     - name: Wait for neo4j-service to start 
       wait_for: port=${webserver_port.stdout} timeout=120
 
-- name: Open Start HA Proxy and open port in security group
+- name: Start HA Proxy and open port in security group
   hosts: haproxy
   user: ubuntu
   sudo: yes
@@ -327,3 +286,10 @@
     - name: Open HA Proxy port
       action: shell /usr/bin/euca-authorize --access-key ${ec2_access_key} --secret-key ${ec2_secret_key} --url ${ec2_url} -P tcp -p ${haproxyport} -s 0.0.0.0/0 ${ansible_ec2_security_groups}
 
+    - name: Wait for HAProxy to become available 
+      wait_for: port=${haproxyport} timeout=120
+      register: port_result
+
+    - name: Display HAProxy URL
+      action: shell echo "HAProxy URL for Neo4j - ${haproxymode}://${ansible_ec2_public_hostname}/webadmin/#/info/org.neo4j/High%20Availability/"
+      when_string: ${port_result.state} == 'started'

@@ -20,7 +20,7 @@ org.neo4j.server.webserver.address=0.0.0.0
 #
 
 # http port (for all data, administrative, and UI access)
-org.neo4j.server.webserver.port={{ webserver_port.stdout }}
+org.neo4j.server.webserver.port={{ ansible_ec2_ami_launch_index|int + 7474 }}
 
 #
 # HTTPS Connector
@@ -30,7 +30,7 @@ org.neo4j.server.webserver.port={{ webserver_port.stdout }}
 org.neo4j.server.webserver.https.enabled=true
 
 # https port (for all data, administrative, and UI access)
-org.neo4j.server.webserver.https.port={{ webserver_https_port.stdout }}
+org.neo4j.server.webserver.https.port={{ ansible_ec2_ami_launch_index|int + 7573 }}
 
 # Certificate location (auto generated if the file does not exist)
 org.neo4j.server.webserver.https.cert.location=conf/ssl/snakeoil.cert
