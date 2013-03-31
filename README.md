@@ -8,7 +8,14 @@ Ansible playbook for Neo4j HA Cluster on AWS/Eucalyptus.  The AMI/EMI used shoul
 
 ### Pre-reqs
 
-Populate vars/ec2-config with either Eucalyptus/AWS information.  vars/ec2-config contains the following variables:
+* Set up /etc/ansible/hosts with the following information:
+
+```
+[local]
+127.0.0.1
+```
+
+* Populate vars/ec2-config with either Eucalyptus/AWS information.  vars/ec2-config contains the following variables:
 
 ```
 keypair: <EC2/Eucalyptus Keypair>
