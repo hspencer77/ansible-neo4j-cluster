@@ -8,6 +8,8 @@ Ansible playbook for Neo4j HA Cluster on AWS/Eucalyptus.  The AMI/EMI used shoul
 
 ### Pre-reqs
 
+* Set up Ansible following the documentation here - http://ansible.cc/docs/gettingstarted.html#getting-ansible
+
 * Set up /etc/ansible/hosts with the following information:
 
 ```
