@@ -246,6 +246,17 @@
     - name: Change ulimit to 40000
       action: lineinfile dest=/etc/security/limits.conf regexp='^ubuntu' insertbefore="^# End of file" line="ubuntu   soft    nofile  40000\nubuntu   hard    nofile  40000\n" 
 
+- name: Start Neo4j on each node in the cluster
+  hosts: neo4j-cluster
+  user: ubuntu
+  sudo: yes
+  gather_facts: true
+  serial: 1
+
+  tasks:
+    - name: Gather EC2 Metadata Information
+      action: ec2_facts
+
     - name: Grab webserver port for test to see if Neo4j starts
       action: shell echo ${ansible_ec2_ami_launch_index} | awk '{PORT = 7474 + $1; print PORT}'
       register: webserver_port
